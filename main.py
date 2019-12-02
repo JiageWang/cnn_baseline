@@ -11,9 +11,9 @@ from train import train
 from valid import valid
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('--arch', default='se_resnet50', type=str)
-parser.add_argument('--epochs', default=200, type=int)
-parser.add_argument('--input_size', default=331, type=int)
+parser.add_argument('--arch', default='se_resnext50_32x4d', type=str)
+parser.add_argument('--epochs', default=300, type=int)
+parser.add_argument('--input_size', default=299, type=int)
 parser.add_argument('--num_classes', default=54, type=int)
 parser.add_argument('--batch_size', default=4, type=int)
 parser.add_argument('--accumulate_steps', default=8, type=int)
@@ -27,6 +27,7 @@ parser.add_argument('--save_acc_thred', default=95, type=float)
 parser.add_argument('--resume', default='', type=str, metavar='PATH')
 parser.add_argument('--train_path', default=r'C:\Users\Administrator\Desktop\train_val\train', type=str)
 parser.add_argument('--valid_path', default=r'C:\Users\Administrator\Desktop\train_val\val', type=str)
+parser.add_argument('--apex', default=True, type=bool)
 parser.add_argument('--finetune', default='adaptiveavgpool2d', type=str)
 
 best_acc1 = 0
@@ -36,8 +37,14 @@ start_epoch = 0
 def main():
     global best_acc1, start_epoch
     args, unknown = parser.parse_known_args()
+    save_dir = "{}_batch{}_size{}_optim{}_lr{}_{}".format(args.arch,
+                                                          args.batch_size * args.accumulate_steps,
+                                                          args.input_size,
+                                                          args.optimizer,
+                                                          args.learning_rate,
+                                                          args.finetune)
 
-    # 创建
+    # 创建模型
     model = pretrainedmodels.__dict__[args.arch](num_classes=1000, pretrained='imagenet')
     model.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
     num_ftrs = model.last_linear.in_features
@@ -55,14 +62,16 @@ def main():
     optimizer = torch.optim.SGD(model.parameters(), args.learning_rate,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [50, 150, 200], 0.1)
+
+    if args.resume:
+        checkpoint = torch.load(args.resume)
+        model.load_state_dict(checkpoint['state_dict'])
+        print("resumed best valid acc: ", checkpoint['best_acc1'])
+        start_epoch = checkpoint['epoch'] + 1
+        save_dir += '_resume'
 
     # 实验记录存储
-    save_dir = "{}_batch{}_size{}_optim{}_lr{}_{}".format(args.arch,
-                                                          args.batch_size * args.accumulate_steps,
-                                                          args.input_size,
-                                                          args.optimizer,
-                                                          args.learning_rate,
-                                                          args.finetune)
     save_log_dir = os.path.join("logs", save_dir)
     save_model_dir = os.path.join("models", save_dir)
     if not os.path.exists(save_log_dir):
@@ -71,12 +80,7 @@ def main():
         os.makedirs(save_model_dir)
     writer = SummaryWriter(save_log_dir)
 
-    if args.resume:
-        checkpoint = torch.load(args.resume)
-        model.load_state_dict(checkpoint['state_dict'])
-        print("resumed best valid acc: ", checkpoint['best_acc1'])
-        start_epoch = checkpoint['epoch'] + 1
-
+    # apex 加速
     for epoch in range(start_epoch, args.epochs):
         # 训练
         train_acc1, train_loss = train(train_loader, model, criterion, optimizer, epoch, args)
@@ -97,6 +101,8 @@ def main():
         writer.add_scalar('train_acc', train_acc1, epoch)
         writer.add_histogram('param/weights', model.module.last_linear.weight.data.cpu().numpy(), epoch)
         writer.add_histogram('param/bias', model.module.last_linear.bias.data.cpu().numpy(), epoch)
+        optimizer.step()
+        scheduler.step()
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
     accumulate_acc1 = 0
     accumulate_loss = 0
-    accumulate_count =  0
+    accumulate_count = 0
     steps = args.accumulate_steps
 
     # switch to train mode
